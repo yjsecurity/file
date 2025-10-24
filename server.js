@@ -1,24 +1,22 @@
 // server.js
-require('dotenv').config(); // 로컬 개발 시 .env 파일 로드
+require('dotenv').config(); 
 
 const express = require('express');
 const { Pool } = require('pg');
 const path = require('path');
-const { put } = require('@vercel/blob'); // 👈 [1] Vercel Blob 모듈 추가
-const multer = require('multer'); // 👈 [2] Multer 모듈 추가
+const { put, del } = require('@vercel/blob'); // 👈 del 함수 추가
+const multer = require('multer');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ------------------------------------
-// 0. Multer 설정: 파일을 메모리에 임시 저장
-// ------------------------------------
-const upload = multer({ storage: multer.memoryStorage() }); // 👈 [3] Multer 설정 추가
+// Multer 설정: 파일을 메모리에 임시 저장 (단일 파일)
+const upload = multer({ storage: multer.memoryStorage() });
 
 // EJS를 템플릿 엔진으로 설정
 app.set('view engine', 'ejs');
 // EJS 템플릿 파일 경로 설정
-app.set('views', path.join(__dirname, 'views')); // 👈 [4] views 경로 설정 추가
+app.set('views', path.join(__dirname, 'views'));
 
 // 폼 데이터 처리를 위한 미들웨어
 app.use(express.urlencoded({ extended: true }));
@@ -41,7 +39,6 @@ pool.connect()
     })
     .catch(err => {
         console.error('❌ Neon DB 연결 오류:', err.message);
-        // Render.com에서는 DB 연결 실패가 치명적이지 않을 수 있지만, 로컬에서는 확인 필요
     });
 
 
@@ -51,7 +48,7 @@ pool.connect()
 
 // 🚀 A. 인증/로그인 페이지
 app.get('/', (req, res) => {
-    res.render('login'); // views/login.ejs 렌더링으로 변경
+    res.render('login');
 });
 
 // 🔒 B. 로그인 처리
@@ -77,7 +74,7 @@ app.get('/files', async (req, res) => {
         const orderBy = validSorts.includes(sortBy) ? sortBy : 'uploaded_at';
         const order = ['ASC', 'DESC'].includes(sortOrder.toUpperCase()) ? sortOrder.toUpperCase() : 'DESC';
         
-        const query = `SELECT * FROM files ORDER BY ${orderBy} ${order}`;
+        const query = `SELECT id, file_name, extension, blob_url, size_bytes, uploaded_at FROM files ORDER BY ${orderBy} ${order}`;
         const { rows: files } = await pool.query(query);
         
         res.render('file_list', { files: files, currentSort: orderBy, currentOrder: order });
@@ -88,54 +85,79 @@ app.get('/files', async (req, res) => {
     }
 });
 
-// 📤 D. 파일 업로드 처리 (server.js)
-
-// upload.single('file') 대신 upload.array('files')를 사용합니다.
-app.post('/upload', upload.array('files'), async (req, res) => { // 👈 'file' -> 'files', single -> array
+// 📤 D. 파일 업로드 처리 (단일 파일로 복구)
+app.post('/upload', upload.single('file'), async (req, res) => {
     
-    if (!req.files || req.files.length === 0) { // 👈 req.files로 변경
+    if (!req.file) {
         return res.status(400).send('업로드할 파일이 없습니다.');
     }
 
-    const filesToInsert = [];
-    const files = req.files; // 업로드된 파일 배열
-
+    const file = req.file;
+    
     try {
-        for (const file of files) { // 👈 파일 배열 반복 처리
-            // 1. Vercel Blob에 파일 업로드 (파일명 깨짐 방지 포함)
-            const encodedFileName = encodeURIComponent(file.originalname);
-            
-            const blob = await put(encodedFileName, file.buffer, {
-                access: 'public',
-                contentType: file.mimetype,
-            });
-
-            // 2. DB에 저장할 메타데이터 준비
-            const fileName = file.originalname;
-            const extension = path.extname(fileName).slice(1) || '';
-            const sizeBytes = file.size;
-            const blobUrl = blob.url;
-
-            filesToInsert.push([fileName, extension, blobUrl, sizeBytes]);
-        }
+        // 1. Vercel Blob에 파일 업로드 (파일명 인코딩 처리)
+        const encodedFileName = encodeURIComponent(file.originalname);
         
-        // 3. 모든 파일 메타데이터를 DB에 일괄 저장
+        const blob = await put(encodedFileName, file.buffer, {
+            access: 'public',
+            contentType: file.mimetype,
+        });
+
+        // 2. 파일 메타데이터 추출 및 DB 저장
+        const fileName = file.originalname;
+        const extension = path.extname(fileName).slice(1) || '';
+        const sizeBytes = file.size;
+        const blobUrl = blob.url; 
+
         const queryText = `
             INSERT INTO files(file_name, extension, blob_url, size_bytes) 
-            VALUES ${filesToInsert.map((_, i) => `($${i*4 + 1}, $${i*4 + 2}, $${i*4 + 3}, $${i*4 + 4})`).join(', ')}
-            RETURNING *`;
-        
-        const queryValues = filesToInsert.flat();
+            VALUES($1, $2, $3, $4) RETURNING *`;
+        const queryValues = [fileName, extension, blobUrl, sizeBytes];
         
         await pool.query(queryText, queryValues);
 
-        console.log(`✅ ${files.length}개 파일 업로드 및 DB 저장 완료.`);
+        console.log(`✅ 파일 업로드 및 DB 저장 완료: ${fileName}`);
         res.redirect('/files');
 
     } catch (error) {
         console.error('❌ 파일 업로드 및 DB 저장 중 오류 발생:', error);
-        res.status(500).send('다중 파일 업로드 처리 중 서버 오류가 발생했습니다.');
+        res.status(500).send('파일 업로드 처리 중 서버 오류가 발생했습니다.');
     }
+});
+
+// 🗑️ E. 파일 삭제 처리 (New Route)
+app.post('/delete/:id', async (req, res) => {
+    const fileId = req.params.id;
+    
+    try {
+        // 1. DB에서 Blob URL 조회
+        const { rows } = await pool.query('SELECT blob_url FROM files WHERE id = $1', [fileId]);
+        
+        if (rows.length === 0) {
+            return res.status(404).send('삭제할 파일을 찾을 수 없습니다.');
+        }
+        
+        const blobUrl = rows[0].blob_url;
+        
+        // 2. Vercel Blob에서 실제 파일 삭제
+        await del(blobUrl);
+
+        // 3. DB에서 메타데이터 삭제
+        await pool.query('DELETE FROM files WHERE id = $1', [fileId]);
+
+        console.log(`✅ 파일 삭제 완료 (ID: ${fileId})`);
+        res.redirect('/files');
+
+    } catch (error) {
+        console.error('❌ 파일 삭제 중 오류 발생:', error);
+        res.status(500).send('파일 삭제 처리 중 서버 오류가 발생했습니다.');
+    }
+});
+
+// 🚪 F. 로그아웃 처리 (New Route)
+app.get('/logout', (req, res) => {
+    // 세션/쿠키를 사용하지 않으므로, 로그인 페이지로 리디렉션하여 재인증을 유도합니다.
+    res.redirect('/');
 });
 
 
