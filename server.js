@@ -6,6 +6,7 @@ const { Pool } = require('pg');
 const path = require('path');
 const { put, del } = require('@vercel/blob'); // 👈 del 함수 추가
 const multer = require('multer');
+const archiver = require('archiver');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -177,6 +178,54 @@ app.get('/logout', (req, res) => {
     res.redirect('/');
 });
 
+// 📥 G. 다중 파일 다운로드 처리 (New Route)
+app.get('/download-multiple', async (req, res) => {
+    // 쉼표로 구분된 파일 ID 문자열을 배열로 변환
+    const fileIds = req.query.ids ? req.query.ids.split(',') : [];
+
+    if (fileIds.length === 0) {
+        return res.status(400).send('다운로드할 파일이 선택되지 않았습니다.');
+    }
+
+    try {
+        // 1. DB에서 선택된 파일 정보 조회
+        const { rows: files } = await pool.query(
+            `SELECT file_name, blob_url FROM files WHERE id = ANY($1::int[])`, 
+            [fileIds]
+        );
+
+        if (files.length === 0) {
+            return res.status(404).send('선택된 파일을 찾을 수 없습니다.');
+        }
+
+        // 2. ZIP 아카이브 생성
+        const archive = archiver('zip', {
+            zlib: { level: 9 } // 압축 수준
+        });
+        
+        // 브라우저에 ZIP 파일임을 알림
+        res.attachment('files.zip');
+        archive.pipe(res);
+
+        // 3. 각 파일을 Blob에서 읽어 ZIP에 추가
+        for (const file of files) {
+            // Blob URL에서 파일 데이터 스트림을 가져옵니다.
+            const blobResponse = await fetch(file.blob_url);
+            
+            // 파일 이름을 UTF-8로 인코딩하여 ZIP 파일 내에서 깨지지 않도록 처리
+            const fileName = file.file_name; 
+            
+            archive.append(blobResponse.body, { name: fileName });
+        }
+
+        // 4. 아카이브 마무리 및 응답 전송
+        await archive.finalize();
+
+    } catch (error) {
+        console.error('❌ 다중 다운로드 중 오류 발생:', error);
+        res.status(500).send('다중 다운로드 처리 중 서버 오류가 발생했습니다.');
+    }
+});
 
 // ------------------------------------
 // 3. 서버 시작
