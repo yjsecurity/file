@@ -4,21 +4,28 @@
     <meta charset="UTF-8">
     <title>파일 관리자 대시보드</title>
     <style>
-        table { width: 100%; border-collapse: collapse; }
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        h1 { margin: 0; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
         th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
         th a { text-decoration: none; color: #333; }
-        .upload-form { margin-bottom: 20px; padding: 15px; border: 1px solid #eee; }
+        .upload-form { margin-bottom: 20px; padding: 15px; border: 1px solid #eee; background-color: #f9f9f9; }
+        .action-button { background: none; border: none; color: #007bff; cursor: pointer; text-decoration: underline; padding: 0; font-size: 1em; }
     </style>
 </head>
 <body>
-    <h1>클라우드 파일 관리자</h1>
+    <header>
+        <h1>클라우드 파일 관리자</h1>
+        <a href="/logout">🚪 로그아웃</a> </header>
 
-<div class="upload-form">
-    <h2>파일 업로드</h2>
-    <form action="/upload" method="POST" enctype="multipart/form-data">
-        <input type="file" name="files" required **multiple**> <button type="submit">업로드</button>
-    </form>
-</div>
+    <div class="upload-form">
+        <h2>파일 업로드 (단일)</h2>
+        <form action="/upload" method="POST" enctype="multipart/form-data">
+            <input type="file" name="file" required>
+            <button type="submit">업로드</button>
+        </form>
+    </div>
 
     <h2>파일 목록 (총 <%= files.length %>개)</h2>
     <table>
@@ -27,30 +34,23 @@
                 <th>
                     <a href="/files?sort=file_name&order=<%= currentSort === 'file_name' && currentOrder === 'ASC' ? 'DESC' : 'ASC' %>">
                         파일 이름
-                        <% if (currentSort === 'file_name') { %>
-                            <%= currentOrder === 'ASC' ? '▲' : '▼' %>
-                        <% } %>
+                        <% if (currentSort === 'file_name') { %><%= currentOrder === 'ASC' ? '▲' : '▼' %><% } %>
                     </a>
                 </th>
                 <th>확장자</th>
                 <th>
                     <a href="/files?sort=size_bytes&order=<%= currentSort === 'size_bytes' && currentOrder === 'ASC' ? 'DESC' : 'ASC' %>">
                         크기
-                        <% if (currentSort === 'size_bytes') { %>
-                            <%= currentOrder === 'ASC' ? '▲' : '▼' %>
-                        <% } %>
+                        <% if (currentSort === 'size_bytes') { %><%= currentOrder === 'size_bytes' ? '▲' : '▼' %><% } %>
                     </a>
                 </th>
                 <th>
                     <a href="/files?sort=uploaded_at&order=<%= currentSort === 'uploaded_at' && currentOrder === 'DESC' ? 'ASC' : 'DESC' %>">
                         업로드 날짜
-                        <% if (currentSort === 'uploaded_at') { %>
-                            <%= currentOrder === 'DESC' ? '▼' : '▲' %>
-                        <% } %>
+                        <% if (currentSort === 'uploaded_at') { %><%= currentOrder === 'DESC' ? '▼' : '▲' %><% } %>
                     </a>
                 </th>
-                <th>다운로드</th>
-            </tr>
+                <th>액션</th> </tr>
         </thead>
         <tbody>
             <% files.forEach(file => { %>
@@ -59,12 +59,16 @@
                     <td><%= file.extension %></td>
                     <td><%= (file.size_bytes / (1024 * 1024)).toFixed(2) %> MB</td>
                     <td><%= file.uploaded_at.toLocaleString() %></td>
-                    <td><a href="<%= file.blob_url %>" target="_blank" download="<%= decodeURIComponent(file.file_name) %>">다운로드</a></td>
+                    <td>
+                        <a href="<%= file.blob_url %>" target="_blank" download="<%= file.file_name %>">다운로드</a>
+                        |
+                        <form action="/delete/<%= file.id %>" method="POST" style="display: inline;" onsubmit="return confirm('정말로 <%= file.file_name %> 파일을 삭제하시겠습니까?');">
+                            <button type="submit" class="action-button">삭제</button>
+                        </form>
+                    </td>
                 </tr>
             <% }); %>
         </tbody>
     </table>
 </body>
 </html>
-
-
