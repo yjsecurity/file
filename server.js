@@ -3,12 +3,14 @@ require('dotenv').config(); // 로컬 개발 시 .env 파일 로드
 
 const express = require('express');
 const { Pool } = require('pg');
+const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // EJS를 템플릿 엔진으로 설정합니다 (파일 목록 HTML 렌더링용)
 app.set('view engine', 'ejs');
+app.set('views', path.join(__dirname, 'views'));
 
 // 정적 파일(CSS/JS)을 제공할 폴더를 설정합니다 (나중에 필요 시)
 // app.use(express.static('public'));
