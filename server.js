@@ -97,9 +97,12 @@ app.post('/upload', upload.single('file'), async (req, res) => {
 
     const file = req.file;
     
-    try {
+try {
         // 1. Vercel Blob에 파일 업로드
-        const blob = await put(file.originalname, file.buffer, {
+        // 파일명을 URL 인코딩 처리하여 한글 깨짐 방지
+        const encodedFileName = encodeURIComponent(file.originalname); // 👈 수정: 파일명 인코딩
+        
+        const blob = await put(encodedFileName, file.buffer, { // 👈 수정: 인코딩된 파일명 사용
             access: 'public',
             contentType: file.mimetype,
         });
