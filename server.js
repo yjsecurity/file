@@ -88,44 +88,53 @@ app.get('/files', async (req, res) => {
     }
 });
 
-// 📤 D. 파일 업로드 처리 👈 [5] 핵심 업로드 라우트 추가
-app.post('/upload', upload.single('file'), async (req, res) => {
+// 📤 D. 파일 업로드 처리 (server.js)
+
+// upload.single('file') 대신 upload.array('files')를 사용합니다.
+app.post('/upload', upload.array('files'), async (req, res) => { // 👈 'file' -> 'files', single -> array
     
-    if (!req.file) {
+    if (!req.files || req.files.length === 0) { // 👈 req.files로 변경
         return res.status(400).send('업로드할 파일이 없습니다.');
     }
 
-    const file = req.file;
-    
-try {
-        // 1. Vercel Blob에 파일 업로드
-        // 파일명을 URL 인코딩 처리하여 한글 깨짐 방지
-        const encodedFileName = encodeURIComponent(file.originalname); // 👈 수정: 파일명 인코딩
+    const filesToInsert = [];
+    const files = req.files; // 업로드된 파일 배열
+
+    try {
+        for (const file of files) { // 👈 파일 배열 반복 처리
+            // 1. Vercel Blob에 파일 업로드 (파일명 깨짐 방지 포함)
+            const encodedFileName = encodeURIComponent(file.originalname);
+            
+            const blob = await put(encodedFileName, file.buffer, {
+                access: 'public',
+                contentType: file.mimetype,
+            });
+
+            // 2. DB에 저장할 메타데이터 준비
+            const fileName = file.originalname;
+            const extension = path.extname(fileName).slice(1) || '';
+            const sizeBytes = file.size;
+            const blobUrl = blob.url;
+
+            filesToInsert.push([fileName, extension, blobUrl, sizeBytes]);
+        }
         
-        const blob = await put(encodedFileName, file.buffer, { // 👈 수정: 인코딩된 파일명 사용
-            access: 'public',
-            contentType: file.mimetype,
-        });
-
-        // 2. 파일 메타데이터 추출 및 DB 저장
-        const fileName = file.originalname;
-        const extension = path.extname(fileName).slice(1) || '';
-        const sizeBytes = file.size;
-        const blobUrl = blob.url; 
-
+        // 3. 모든 파일 메타데이터를 DB에 일괄 저장
         const queryText = `
             INSERT INTO files(file_name, extension, blob_url, size_bytes) 
-            VALUES($1, $2, $3, $4) RETURNING *`;
-        const queryValues = [fileName, extension, blobUrl, sizeBytes];
+            VALUES ${filesToInsert.map((_, i) => `($${i*4 + 1}, $${i*4 + 2}, $${i*4 + 3}, $${i*4 + 4})`).join(', ')}
+            RETURNING *`;
+        
+        const queryValues = filesToInsert.flat();
         
         await pool.query(queryText, queryValues);
 
-        console.log(`✅ 파일 업로드 및 DB 저장 완료: ${fileName}`);
+        console.log(`✅ ${files.length}개 파일 업로드 및 DB 저장 완료.`);
         res.redirect('/files');
 
     } catch (error) {
         console.error('❌ 파일 업로드 및 DB 저장 중 오류 발생:', error);
-        res.status(500).send('파일 업로드 처리 중 서버 오류가 발생했습니다.');
+        res.status(500).send('다중 파일 업로드 처리 중 서버 오류가 발생했습니다.');
     }
 });
 
