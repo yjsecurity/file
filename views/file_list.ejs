@@ -59,11 +59,12 @@
                     <td><%= file.extension %></td>
                     <td><%= (file.size_bytes / (1024 * 1024)).toFixed(2) %> MB</td>
                     <td><%= file.uploaded_at.toLocaleString() %></td>
-                    <td><a href="<%= file.blob_url %>" target="_blank">다운로드</a></td>
+                    <td><a href="<%= file.blob_url %>" target="_blank" download="<%= decodeURIComponent(file.file_name) %>">다운로드</a></td>
                 </tr>
             <% }); %>
         </tbody>
     </table>
 </body>
 </html>
+
 
