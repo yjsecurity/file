@@ -14,9 +14,8 @@ const PORT = process.env.PORT || 3000;
 const storage = multer.memoryStorage();
 const upload = multer({ 
     storage: storage,
-    // filename 필터에서 파일명을 UTF-8로 디코딩하도록 처리 (Crucial Fix for Korean)
     fileFilter: function(req, file, cb) {
-        // Multer가 받은 파일명을 UTF-8로 다시 디코딩 시도
+        // 기존 한글 깨짐 해결 로직 유지
         file.originalname = Buffer.from(file.originalname, 'latin1').toString('utf8');
         cb(null, true);
     }
@@ -93,43 +92,53 @@ app.get('/files', async (req, res) => {
     }
 });
 
-// 📤 D. 파일 업로드 처리 (단일 파일로 복구)
-app.post('/upload', upload.single('file'), async (req, res) => {
+// 📤 D. 파일 업로드 처리 (server.js)
+// upload.single('file')을 upload.array('files')로 변경
+app.post('/upload', upload.array('files'), async (req, res) => { 
     
-    if (!req.file) {
+    if (!req.files || req.files.length === 0) {
         return res.status(400).send('업로드할 파일이 없습니다.');
     }
 
-    const file = req.file;
-    
+    const filesToInsert = [];
+    const files = req.files; // 업로드된 파일 배열
+
     try {
-        // 1. Vercel Blob에 파일 업로드 (파일명 인코딩 처리)
-        const encodedFileName = encodeURIComponent(file.originalname);
+        for (const file of files) { // 파일 배열 반복 처리
+            // 1. Vercel Blob에 파일 업로드 (파일명 깨짐 방지 포함)
+            const encodedFileName = encodeURIComponent(file.originalname);
+            
+            const blob = await put(encodedFileName, file.buffer, {
+                access: 'public',
+                contentType: file.mimetype,
+            });
+
+            // 2. DB에 저장할 메타데이터 준비
+            const fileName = file.originalname;
+            const extension = path.extname(fileName).slice(1) || '';
+            const sizeBytes = file.size;
+            const blobUrl = blob.url;
+
+            filesToInsert.push([fileName, extension, blobUrl, sizeBytes]);
+        }
         
-        const blob = await put(encodedFileName, file.buffer, {
-            access: 'public',
-            contentType: file.mimetype,
-        });
-
-        // 2. 파일 메타데이터 추출 및 DB 저장
-        const fileName = file.originalname;
-        const extension = path.extname(fileName).slice(1) || '';
-        const sizeBytes = file.size;
-        const blobUrl = blob.url; 
-
+        // 3. 모든 파일 메타데이터를 DB에 일괄 저장
+        // SQL 인젝션 방지를 위해 쿼리를 동적으로 생성
         const queryText = `
             INSERT INTO files(file_name, extension, blob_url, size_bytes) 
-            VALUES($1, $2, $3, $4) RETURNING *`;
-        const queryValues = [fileName, extension, blobUrl, sizeBytes];
+            VALUES ${filesToInsert.map((_, i) => `($${i*4 + 1}, $${i*4 + 2}, $${i*4 + 3}, $${i*4 + 4})`).join(', ')}
+            RETURNING *`;
+        
+        const queryValues = filesToInsert.flat();
         
         await pool.query(queryText, queryValues);
 
-        console.log(`✅ 파일 업로드 및 DB 저장 완료: ${fileName}`);
+        console.log(`✅ ${files.length}개 파일 업로드 및 DB 저장 완료.`);
         res.redirect('/files');
 
     } catch (error) {
         console.error('❌ 파일 업로드 및 DB 저장 중 오류 발생:', error);
-        res.status(500).send('파일 업로드 처리 중 서버 오류가 발생했습니다.');
+        res.status(500).send('다중 파일 업로드 처리 중 서버 오류가 발생했습니다.');
     }
 });
 
