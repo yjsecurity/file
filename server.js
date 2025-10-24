@@ -178,7 +178,9 @@ app.get('/logout', (req, res) => {
     res.redirect('/');
 });
 
-// 📥 G. 다중 파일 다운로드 처리 (New Route - 보강됨)
+// 📥 G. 다중 파일 다운로드 처리 (최종 보강 코드 - 버퍼 방식)
+// server.js 파일 내에서 기존 /download-multiple 라우트 전체를 교체합니다.
+
 app.get('/download-multiple', async (req, res) => {
     const fileIds = req.query.ids ? req.query.ids.split(',') : [];
 
@@ -186,57 +188,51 @@ app.get('/download-multiple', async (req, res) => {
         return res.status(400).send('다운로드할 파일이 선택되지 않았습니다.');
     }
 
-    // ZIP 아카이브 생성
     const archive = archiver('zip', {
         zlib: { level: 9 }
     });
     
-    // 에러 발생 시 스트림 중단 및 로그 기록
+    // 에러 발생 시 스트림 중단
     archive.on('error', (err) => {
         console.error('Archiver Error:', err);
-        res.status(500).send('ZIP 압축 중 오류가 발생했습니다.');
+        if (!res.headersSent) {
+            res.status(500).send('ZIP 압축 중 오류가 발생했습니다.');
+        } else {
+            res.end();
+        }
     });
 
-    // 브라우저에 ZIP 파일임을 알리고 응답 스트림 연결
     res.attachment('files.zip');
     archive.pipe(res);
 
     try {
-        // 1. DB에서 선택된 파일 정보 조회
         const { rows: files } = await pool.query(
             `SELECT file_name, blob_url FROM files WHERE id = ANY($1::int[])`, 
             [fileIds]
         );
 
-        if (files.length === 0) {
-            archive.finalize(); // 빈 ZIP 파일로 마무리
-            return;
-        }
-
-        // 2. 각 파일을 Blob에서 읽어 ZIP에 추가
         for (const file of files) {
             const blobResponse = await fetch(file.blob_url);
             
-            // fetch 응답이 스트림 가능한지 확인
-            if (!blobResponse.ok || !blobResponse.body) {
-                console.error(`Blob fetch failed for URL: ${file.blob_url}`);
+            if (!blobResponse.ok) {
+                console.error(`Blob fetch failed for file: ${file.file_name}`);
                 continue; 
             }
             
-            // 파일 내용을 ZIP에 스트리밍으로 추가
-            archive.append(blobResponse.body, { name: file.file_name });
+            // 💡 중요: fetch 응답을 Buffer로 변환하여 Archiver에 전달합니다.
+            const buffer = Buffer.from(await blobResponse.arrayBuffer()); 
+            
+            archive.append(buffer, { name: file.file_name });
         }
 
-        // 3. 아카이브 마무리 및 응답 전송 (이 시점에서 응답이 완료됩니다)
         await archive.finalize();
 
     } catch (error) {
         console.error('❌ 다중 다운로드 (DB/Fetch) 중 오류 발생:', error);
-        // 서버 측에서 에러가 발생하면 클라이언트 응답을 닫습니다.
         if (!res.headersSent) {
             res.status(500).send('서버 내부 오류로 다운로드를 완료할 수 없습니다.');
         } else {
-            // 이미 헤더가 전송되었다면 스트림을 강제 종료
+            archive.abort();
             res.end();
         }
     }
