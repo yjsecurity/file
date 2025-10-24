@@ -4,16 +4,21 @@ require('dotenv').config(); // 로컬 개발 시 .env 파일 로드
 const express = require('express');
 const { Pool } = require('pg');
 const path = require('path');
+const { put } = require('@vercel/blob'); // 👈 [1] Vercel Blob 모듈 추가
+const multer = require('multer'); // 👈 [2] Multer 모듈 추가
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// EJS를 템플릿 엔진으로 설정합니다 (파일 목록 HTML 렌더링용)
-app.set('view engine', 'ejs');
-app.set('views', path.join(__dirname, 'views'));
+// ------------------------------------
+// 0. Multer 설정: 파일을 메모리에 임시 저장
+// ------------------------------------
+const upload = multer({ storage: multer.memoryStorage() }); // 👈 [3] Multer 설정 추가
 
-// 정적 파일(CSS/JS)을 제공할 폴더를 설정합니다 (나중에 필요 시)
-// app.use(express.static('public'));
+// EJS를 템플릿 엔진으로 설정
+app.set('view engine', 'ejs');
+// EJS 템플릿 파일 경로 설정
+app.set('views', path.join(__dirname, 'views')); // 👈 [4] views 경로 설정 추가
 
 // 폼 데이터 처리를 위한 미들웨어
 app.use(express.urlencoded({ extended: true }));
@@ -41,55 +46,83 @@ pool.connect()
 
 
 // ------------------------------------
-// 2. 라우트 정의 (홈 페이지 및 인증)
+// 2. 라우트 정의
 // ------------------------------------
 
 // 🚀 A. 인증/로그인 페이지
 app.get('/', (req, res) => {
-    // 임시로 로그인 페이지를 렌더링합니다.
-    res.send('<h1>비밀번호를 입력하세요.</h1><form method="POST" action="/login"><input type="password" name="password" required><button type="submit">로그인</button></form>');
+    res.render('login'); // views/login.ejs 렌더링으로 변경
 });
 
-// 🔒 B. 로그인 처리 (임시)
+// 🔒 B. 로그인 처리
 app.post('/login', (req, res) => {
     const { password } = req.body;
-    // 실제로는 안전하게 해시된 비밀번호와 비교해야 합니다.
     const CORRECT_PASSWORD = process.env.ACCESS_PASSWORD; 
     
-    if (password === CORRECT_PASSWORD) {
-        // 실제 앱에서는 세션/쿠키를 사용하여 로그인 상태를 유지해야 합니다.
-        res.redirect('/files');
-    } else {
-        res.send('비밀번호가 틀렸습니다. <a href="/">다시 시도</a>');
+    if (password === CORRECT_PASSWORD && CORRECT_PASSWORD) {
+        // 실제 앱에서는 쿠키/세션을 설정해야 하지만, 일단 리디렉션
+        return res.redirect('/files');
     }
+    
+    res.send('<h1>접근 비밀번호를 확인해주세요.</h1><a href="/">다시 시도</a>');
 });
 
-// 📂 C. 파일 목록 페이지
+// 📂 C. 파일 목록 페이지 (DB 조회 및 EJS 렌더링)
 app.get('/files', async (req, res) => {
-    // **주의:** 여기서 DB 연결 코드가 누락되면 이 메시지가 뜹니다!
-
-    // try-catch 블록 안에 DB 조회 및 EJS 렌더링 코드가 있어야 합니다.
     try {
-        // 정렬 기준을 쿼리 파라미터에서 가져옵니다 (기본값: 최신순)
         const sortBy = req.query.sort || 'uploaded_at';
-        const sortOrder = req.query.order || 'DESC'; // 'ASC' or 'DESC'
+        const sortOrder = req.query.order || 'DESC';
 
-        // SQL 인젝션 방지를 위해, 정렬 컬럼은 화이트리스트로 검증합니다.
         const validSorts = ['file_name', 'uploaded_at', 'size_bytes', 'extension'];
         const orderBy = validSorts.includes(sortBy) ? sortBy : 'uploaded_at';
         const order = ['ASC', 'DESC'].includes(sortOrder.toUpperCase()) ? sortOrder.toUpperCase() : 'DESC';
         
         const query = `SELECT * FROM files ORDER BY ${orderBy} ${order}`;
-        const { rows: files } = await pool.query(query); // Neon DB에서 파일 목록 조회
+        const { rows: files } = await pool.query(query);
         
-        // EJS 템플릿을 렌더링합니다.
-        // views/file_list.ejs 파일의 모든 내용을 HTML로 변환합니다.
         res.render('file_list', { files: files, currentSort: orderBy, currentOrder: order });
         
     } catch (error) {
         console.error('DB 파일 목록 조회 오류:', error);
-        // DB 연결 오류 등이 발생했을 경우
-        res.status(500).send('파일 목록을 불러오는 중 오류가 발생했습니다. DB 연결을 확인하세요.');
+        res.status(500).send('파일 목록을 불러오는 중 오류가 발생했습니다. Render 로그를 확인하세요.');
+    }
+});
+
+// 📤 D. 파일 업로드 처리 👈 [5] 핵심 업로드 라우트 추가
+app.post('/upload', upload.single('file'), async (req, res) => {
+    
+    if (!req.file) {
+        return res.status(400).send('업로드할 파일이 없습니다.');
+    }
+
+    const file = req.file;
+    
+    try {
+        // 1. Vercel Blob에 파일 업로드
+        const blob = await put(file.originalname, file.buffer, {
+            access: 'public',
+            contentType: file.mimetype,
+        });
+
+        // 2. 파일 메타데이터 추출 및 DB 저장
+        const fileName = file.originalname;
+        const extension = path.extname(fileName).slice(1) || '';
+        const sizeBytes = file.size;
+        const blobUrl = blob.url; 
+
+        const queryText = `
+            INSERT INTO files(file_name, extension, blob_url, size_bytes) 
+            VALUES($1, $2, $3, $4) RETURNING *`;
+        const queryValues = [fileName, extension, blobUrl, sizeBytes];
+        
+        await pool.query(queryText, queryValues);
+
+        console.log(`✅ 파일 업로드 및 DB 저장 완료: ${fileName}`);
+        res.redirect('/files');
+
+    } catch (error) {
+        console.error('❌ 파일 업로드 및 DB 저장 중 오류 발생:', error);
+        res.status(500).send('파일 업로드 처리 중 서버 오류가 발생했습니다.');
     }
 });
 
