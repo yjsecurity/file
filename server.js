@@ -237,6 +237,43 @@ app.get('/download-multiple', async (req, res) => {
         }
     }
 });
+// 🗑️ H. 다중 파일 삭제 처리 (New Route)
+app.post('/delete-multiple', async (req, res) => {
+    // 쉼표로 구분된 파일 ID 문자열을 배열로 변환
+    const fileIds = req.body.ids ? req.body.ids.split(',') : [];
+
+    if (fileIds.length === 0) {
+        return res.status(400).send('삭제할 파일이 선택되지 않았습니다.');
+    }
+
+    try {
+        // 1. DB에서 Blob URL 조회 (Vercel Blob에서 삭제하기 위해)
+        const { rows: files } = await pool.query(
+            `SELECT blob_url FROM files WHERE id = ANY($1::int[])`, 
+            [fileIds]
+        );
+
+        if (files.length === 0) {
+            // 파일이 없더라도 DB에서 삭제 시도
+            await pool.query('DELETE FROM files WHERE id = ANY($1::int[])', [fileIds]);
+            return res.redirect('/files');
+        }
+
+        // 2. Vercel Blob에서 실제 파일들 삭제
+        const blobUrls = files.map(f => f.blob_url);
+        await del(blobUrls); // del 함수는 URL 배열을 받아 한 번에 삭제 가능
+
+        // 3. DB에서 메타데이터 일괄 삭제
+        await pool.query('DELETE FROM files WHERE id = ANY($1::int[])', [fileIds]);
+
+        console.log(`✅ ${fileIds.length}개 파일 다중 삭제 완료.`);
+        res.redirect('/files');
+
+    } catch (error) {
+        console.error('❌ 다중 파일 삭제 중 오류 발생:', error);
+        res.status(500).send('다중 파일 삭제 처리 중 서버 오류가 발생했습니다.');
+    }
+});
 
 // ------------------------------------
 // 3. 서버 시작
