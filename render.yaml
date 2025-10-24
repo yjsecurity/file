@@ -1,0 +1,25 @@
+# render.yaml 예시
+services:
+  - type: web
+    name: my-filebrowser
+    env: docker
+    dockerContext: .
+    # Docker 이미지를 직접 지정할 수도 있습니다.
+    # image: filebrowser/filebrowser
+    
+    # 🚨 필수: 파일 영구 저장을 위한 디스크 설정 (Standard 유료 플랜 필요)
+    disk:
+      name: filebrowser-storage
+      mountPath: /srv
+      sizeGB: 1
+      
+    # 환경 변수 설정
+    envVars:
+      - key: FB_DATABASE
+        value: "/srv/database.db" # 데이터베이스 파일을 영구 디스크에 저장
+      - key: FB_ADDRESS
+        value: "0.0.0.0"
+      - key: FB_PORT
+        value: "10000" # Render 내부 포트
+    
+    # Render 웹 서비스 포트 매핑은 자동으로 처리됩니다.
