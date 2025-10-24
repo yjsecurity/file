@@ -11,8 +11,16 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Multer 설정: 파일을 메모리에 임시 저장 (단일 파일)
-const upload = multer({ storage: multer.memoryStorage() });
-
+const storage = multer.memoryStorage();
+const upload = multer({ 
+    storage: storage,
+    // filename 필터에서 파일명을 UTF-8로 디코딩하도록 처리 (Crucial Fix for Korean)
+    fileFilter: function(req, file, cb) {
+        // Multer가 받은 파일명을 UTF-8로 다시 디코딩 시도
+        file.originalname = Buffer.from(file.originalname, 'latin1').toString('utf8');
+        cb(null, true);
+    }
+});
 // EJS를 템플릿 엔진으로 설정
 app.set('view engine', 'ejs');
 // EJS 템플릿 파일 경로 설정
