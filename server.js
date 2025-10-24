@@ -62,10 +62,33 @@ app.post('/login', (req, res) => {
     }
 });
 
-// 📂 C. 파일 목록 페이지 (로그인 후 접근)
-app.get('/files', (req, res) => {
-    // **TODO:** 여기서 Neon DB에서 파일 목록을 가져와 EJS로 렌더링해야 합니다.
-    res.send('<h1>파일 관리자 대시보드 (접근 성공)</h1>');
+// 📂 C. 파일 목록 페이지
+app.get('/files', async (req, res) => {
+    // **주의:** 여기서 DB 연결 코드가 누락되면 이 메시지가 뜹니다!
+
+    // try-catch 블록 안에 DB 조회 및 EJS 렌더링 코드가 있어야 합니다.
+    try {
+        // 정렬 기준을 쿼리 파라미터에서 가져옵니다 (기본값: 최신순)
+        const sortBy = req.query.sort || 'uploaded_at';
+        const sortOrder = req.query.order || 'DESC'; // 'ASC' or 'DESC'
+
+        // SQL 인젝션 방지를 위해, 정렬 컬럼은 화이트리스트로 검증합니다.
+        const validSorts = ['file_name', 'uploaded_at', 'size_bytes', 'extension'];
+        const orderBy = validSorts.includes(sortBy) ? sortBy : 'uploaded_at';
+        const order = ['ASC', 'DESC'].includes(sortOrder.toUpperCase()) ? sortOrder.toUpperCase() : 'DESC';
+        
+        const query = `SELECT * FROM files ORDER BY ${orderBy} ${order}`;
+        const { rows: files } = await pool.query(query); // Neon DB에서 파일 목록 조회
+        
+        // EJS 템플릿을 렌더링합니다.
+        // views/file_list.ejs 파일의 모든 내용을 HTML로 변환합니다.
+        res.render('file_list', { files: files, currentSort: orderBy, currentOrder: order });
+        
+    } catch (error) {
+        console.error('DB 파일 목록 조회 오류:', error);
+        // DB 연결 오류 등이 발생했을 경우
+        res.status(500).send('파일 목록을 불러오는 중 오류가 발생했습니다. DB 연결을 확인하세요.');
+    }
 });
 
 
